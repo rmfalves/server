@@ -35,7 +35,7 @@ SELECT @@global.gtid_binlog_state;
 @@global.gtid_binlog_state
 0-1-9
 # Kill the server
-# restart as the semisync slave
+# Failed restart as the semisync slave
 # Normal restart
 connection default;
 FOUND # /Cannot trim the binary log to file/ in mysqld.1.err

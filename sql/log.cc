@@ -10230,12 +10230,7 @@ public:
   rpl_gtid last_gtid;
   bool last_gtid_standalone;
   bool last_gtid_valid;
-  /*
-    In the regular server recovery it's
-    a part of the binlog state condtion. 'unsafe" refers to
-    the semisync-slave recovery mode to indicate unsafe to truncate.
-  */
-  bool last_gtid_unsafe;
+  bool last_gtid_no2pc; // true when the group does not end with Xid event
   uint last_gtid_engines;
   /*
     When true, it's semisync slave recovery mode
@@ -10293,6 +10288,7 @@ public:
       binlog_unsafe_coord < binlog_truncate_coord ? true : false;
   }
   bool complete(MYSQL_BIN_LOG *log);
+  void update_binlog_unsafe_coord(LOG_INFO *linfo);
 };
 
 bool Recovery_context::complete(MYSQL_BIN_LOG *log)
@@ -10329,7 +10325,7 @@ bool Recovery_context::complete(MYSQL_BIN_LOG *log)
 }
 
 Recovery_context::Recovery_context() :
-  last_gtid_standalone(false), last_gtid_valid(false), last_gtid_unsafe(false),
+  last_gtid_standalone(false), last_gtid_valid(false), last_gtid_no2pc(false),
   last_gtid_engines(0),
   do_truncate(rpl_semi_sync_slave_enabled),
   prev_event_pos(0),
@@ -10472,6 +10468,20 @@ bool Recovery_context::decide_or_assess(xid_recovery_member *member, int round,
 }
 
 /*
+  Is invoked when an unsafe-to-truncate group is detected to
+  update the maximum coordinate when applies.
+*/
+void Recovery_context::update_binlog_unsafe_coord(LOG_INFO *linfo)
+{
+  if (binlog_unsafe_coord.second == 0 ||
+      last_gtid_coord > binlog_unsafe_coord)
+  {
+    binlog_unsafe_coord= last_gtid_coord;
+    strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
+  }
+}
+
+/*
   Assigns last_gtid and assesses the maximum (in the binlog offset term)
   unsafe gtid (group of events).
 */
@@ -10484,24 +10494,19 @@ void Recovery_context::process_gtid(int round, Gtid_log_event *gev,
   last_gtid.seq_no= gev->seq_no;
   if (round == 1 || do_truncate)
   {
+    DBUG_ASSERT(!last_gtid_no2pc);
+    DBUG_ASSERT(!last_gtid_valid);
+
     last_gtid_standalone=
       (gev->flags2 & Gtid_log_event::FL_STANDALONE) ? true : false;
-    last_gtid_valid= true;    // may flip at Xid when do truncate & validated
-    last_gtid_unsafe= false;  // may flip at the end of the group
+    last_gtid_valid= true;    // may flip at Xid when validated to truncate
   }
   last_gtid_engines= gev->extra_engines + 1;
   if (do_truncate)
   {
     last_gtid_coord= {id_binlog, prev_event_pos};
     if (!(gev->flags2 & Gtid_log_event::FL_TRANSACTIONAL))
-    {
-      if (binlog_unsafe_coord.second == 0 ||
-          last_gtid_coord > binlog_unsafe_coord)
-      {
-        binlog_unsafe_coord= {id_binlog, prev_event_pos};
-        strmake_buf(binlog_unsafe_file_name, linfo->log_file_name);
-      }
-    }
+      update_binlog_unsafe_coord(linfo);
   }
 }
 
@@ -10767,7 +10772,11 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
       case QUERY_EVENT:
         if (((Query_log_event *)ev)->is_commit() ||
             ((Query_log_event *)ev)->is_rollback())
-          ctx.last_gtid_unsafe= true;
+        {
+          ctx.update_binlog_unsafe_coord(linfo);
+
+          ctx.last_gtid_no2pc= true; // may be also FL_TRANSACTIONAL
+        }
         break;
 #endif
 
@@ -10787,13 +10796,19 @@ int TC_LOG_BINLOG::recover(LOG_INFO *linfo, const char *last_log_name,
       if (ctx.last_gtid_valid &&
           ((ctx.last_gtid_standalone && !ev->is_part_of_group(typ)) ||
            (!ctx.last_gtid_standalone &&
-            (typ == XID_EVENT || ctx.last_gtid_unsafe))))
+            (typ == XID_EVENT || ctx.last_gtid_no2pc))))
       {
         DBUG_ASSERT(round == 1 || ctx.do_truncate);
+        DBUG_ASSERT(!ctx.last_gtid_no2pc ||
+                    (ctx.last_gtid_standalone ||
+                     (LOG_EVENT_IS_QUERY(typ) &&
+                     (((Query_log_event *)ev)->is_commit() ||
+                      ((Query_log_event *)ev)->is_rollback()))));
 
         if (rpl_global_gtid_binlog_state.update_nolock(&ctx.last_gtid, false))
           goto err2;
-        ctx.last_gtid_unsafe= ctx.last_gtid_valid= false;
+        ctx.last_gtid_no2pc= false;
+        ctx.last_gtid_valid= false;
       }
       ctx.prev_event_pos= ev->log_pos;
 #endif
