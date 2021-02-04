@@ -425,14 +425,16 @@ struct trx_lock_t
   trx->mutex, by the thread that is executing the transaction.
   Set to nullptr when holding lock_sys.wait_mutex. */
   Atomic_relaxed<lock_t*> wait_lock;
-  /** condition variable for !wait_lock; used with lock_sys.wait_mutex */
+  /** Transaction being waited for.
+  Set to nullptr when holding lock_sys.wait_mutex.
+  Otherwise, only set by the thread that is executing the transaction,
+  while holding lock_sys.mutex. */
+  trx_t *wait_trx;
+  /** condition variable for !wait_trx; used with lock_sys.wait_mutex */
   mysql_cond_t cond;
   /** lock wait start time, protected only by lock_sys.wait_mutex */
   my_hrtime_t suspend_time;
 
-	ib_uint64_t	deadlock_mark;	/*!< A mark field that is initialized
-					to and checked against lock_mark_counter
-					by lock_deadlock_recursive(). */
   /** When the transaction decides to wait for a lock, it clears this;
   set if another transaction chooses this transaction as a victim in deadlock
   resolution. Protected by lock_sys.mutex and lock_sys.wait_mutex. */

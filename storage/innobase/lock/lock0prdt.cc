@@ -472,12 +472,16 @@ lock_prdt_add_to_queue(
 	}
 
 create:
-	lock_t* lock = lock_rec_create(
+	/* Note: We will not pass any conflicting lock to lock_rec_create(),
+	because we should be moving an existing waiting lock request. */
+	ut_ad(!(type_mode & LOCK_WAIT) || trx->lock.wait_trx);
+
+	lock_t* lock = lock_rec_create(nullptr,
 #ifdef WITH_WSREP
-		NULL, NULL, /* FIXME: replicate SPATIAL INDEX locks */
+				       nullptr,
 #endif
-		type_mode, block, PRDT_HEAPNO, index, trx,
-		caller_owns_trx_mutex);
+				       type_mode, block, PRDT_HEAPNO, index,
+				       trx, caller_owns_trx_mutex);
 
 	if (lock->type_mode & LOCK_PREDICATE) {
 		lock_prdt_set_prdt(lock, prdt);
@@ -544,10 +548,8 @@ lock_prdt_insert_check_and_lock(
 
 	const ulint	mode = LOCK_X | LOCK_PREDICATE | LOCK_INSERT_INTENTION;
 
-	const lock_t*	wait_for = lock_prdt_other_has_conflicting(
-		mode, id, prdt, trx);
-
-	if (wait_for != NULL) {
+	if (lock_t* wait_for = lock_prdt_other_has_conflicting(
+		    mode, id, prdt, trx)) {
 		rtr_mbr_t*	mbr = prdt_get_mbr_from_prdt(prdt);
 
 		/* Allocate MBR on the lock heap */
@@ -557,9 +559,7 @@ lock_prdt_insert_check_and_lock(
 		trx->mutex.wr_lock();
 
 		err = lock_rec_enqueue_waiting(
-#ifdef WITH_WSREP
-			NULL, /* FIXME: replicate SPATIAL INDEX locks */
-#endif
+			wait_for,
 			LOCK_X | LOCK_PREDICATE | LOCK_INSERT_INTENTION,
 			id, block->frame, PRDT_HEAPNO, index, thr, prdt);
 
@@ -774,8 +774,9 @@ lock_prdt_lock(
 
 	if (lock == NULL) {
 		lock = lock_rec_create(
+			NULL,
 #ifdef WITH_WSREP
-			NULL, NULL, /* FIXME: replicate SPATIAL INDEX locks */
+			NULL, /* FIXME: replicate SPATIAL INDEX locks */
 #endif
 			prdt_mode, block, PRDT_HEAPNO,
 			index, trx, FALSE);
@@ -804,10 +805,7 @@ lock_prdt_lock(
 				if (wait_for != NULL) {
 
 					err = lock_rec_enqueue_waiting(
-#ifdef WITH_WSREP
-						NULL, /* FIXME: replicate
-						      SPATIAL INDEX locks */
-#endif
+						wait_for,
 						prdt_mode,
 						id, block->frame, PRDT_HEAPNO,
 						index, thr, prdt);
@@ -879,8 +877,9 @@ lock_place_prdt_page_lock(
 
 	if (lock == NULL) {
 		lock = lock_rec_create_low(
+			NULL,
 #ifdef WITH_WSREP
-			NULL, NULL, /* FIXME: replicate SPATIAL INDEX locks */
+			NULL, /* FIXME: replicate SPATIAL INDEX locks */
 #endif
 			mode, page_id, NULL, PRDT_HEAPNO,
 			index, trx, FALSE);
