@@ -25,7 +25,7 @@
 #include "trnman.h"
 
 extern PAGECACHE *maria_log_pagecache;
-extern char *maria_data_root;
+extern const char *maria_data_root;
 
 #define MAX_REC_LENGTH 1024
 
@@ -75,7 +75,7 @@ int main(int argc,char *argv[])
   safe_mutex_deadlock_detector= 1;
 #endif
   MY_INIT(argv[0]);
-  maria_data_root= (char *)".";
+  maria_data_root= ".";
   get_options(argc,argv);
   /* Maria requires that we always have a page cache */
   if (maria_init() ||

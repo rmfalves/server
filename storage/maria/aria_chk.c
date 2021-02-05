@@ -128,7 +128,7 @@ int main(int argc, char **argv)
   MY_INIT(argv[0]);
 
   my_setup_stacktrace();
-  default_log_dir= opt_log_dir= maria_data_root= (char *)".";
+  default_log_dir= opt_log_dir= maria_data_root= ".";
   maria_chk_init(&check_param);
   check_param.opt_lock_memory= 1;		/* Lock memory if possible */
   check_param.using_global_keycache = 0;

@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
 {
   char buff[FN_REFLEN];  
   MY_INIT(argv[0]);
-  maria_data_root= (char *)".";
+  maria_data_root= ".";
   get_options(argc, argv);
   /* Maria requires that we always have a page cache */
   if (maria_init() ||

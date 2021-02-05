@@ -83,7 +83,7 @@ int main(int argc, char **argv)
   uint warnings_count;
   MY_INIT(argv[0]);
 
-  maria_data_root= (char *)".";
+  maria_data_root= ".";
   sf_leaking_memory=1; /* don't report memory leaks on early exits */
   load_defaults_or_exit("my", load_default_groups, &argc, &argv);
   default_argv= argv;

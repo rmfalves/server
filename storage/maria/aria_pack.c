@@ -229,7 +229,7 @@ int main(int argc, char **argv)
   my_bool no_control_file= 0;
   MY_INIT(argv[0]);
 
-  maria_data_root= (char *)".";
+  maria_data_root= ".";
   load_defaults_or_exit("my", load_default_groups, &argc, &argv);
   default_argv= argv;
   get_options(&argc,&argv);
