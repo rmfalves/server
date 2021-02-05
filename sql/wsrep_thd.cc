@@ -22,7 +22,7 @@
 #include "rpl_rli.h"
 #include "log_event.h"
 #include "sql_parse.h"
-#include "sql_base.h" // close_thread_tables()
+//#include "sql_base.h" // close_thread_tables()
 #include "mysqld.h"   // start_wsrep_THD();
 #include "wsrep_applier.h"   // start_wsrep_THD();
 #include "mysql/service_wsrep.h"
@@ -474,3 +474,20 @@ void wsrep_reset_threadvars(THD *thd)
     thd->reset_globals();
   }
 }
+
+#if 0
+// beaea31ab12ab56ea8a6eb5e99cf82648675ea78
+
+      /* Allow tests to block the replayer thread using the DBUG facilities */
+#ifdef ENABLED_DEBUG_SYNC
+      DBUG_EXECUTE_IF("sync.wsrep_replay_cb",
+      {
+        const char act[]=
+          "now "
+          "SIGNAL sync.wsrep_replay_cb_reached "
+          "WAIT_FOR signal.wsrep_replay_cb";
+        DBUG_ASSERT(!debug_sync_set_action(thd,
+                                           STRING_WITH_LEN(act)));
+       };);
+#endif /* ENABLED_DEBUG_SYNC */
+#endif

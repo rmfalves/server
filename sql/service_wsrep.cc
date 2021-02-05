@@ -37,6 +37,16 @@ extern "C" void wsrep_thd_UNLOCK(const THD *thd)
   mysql_mutex_unlock(&thd->LOCK_thd_data);
 }
 
+extern "C" void wsrep_thd_kill_LOCK(const THD *thd)
+{
+  mysql_mutex_lock(&thd->LOCK_thd_kill);
+}
+
+extern "C" void wsrep_thd_kill_UNLOCK(const THD *thd)
+{
+  mysql_mutex_unlock(&thd->LOCK_thd_kill);
+}
+
 extern "C" const char* wsrep_thd_client_state_str(const THD *thd)
 {
   return wsrep::to_c_string(thd->wsrep_cs().state());
@@ -230,11 +240,9 @@ extern "C" my_bool wsrep_thd_bf_abort(THD *bf_thd, THD *victim_thd,
       return false;
     }
 
-    mysql_mutex_lock(&victim_thd->LOCK_thd_kill);
     victim_thd->wsrep_aborter= bf_thd->thread_id;
-    victim_thd->awake_no_mutex(KILL_QUERY);
-    mysql_mutex_unlock(&victim_thd->LOCK_thd_kill);
     mysql_mutex_unlock(&victim_thd->LOCK_thd_data);
+    victim_thd->awake(KILL_QUERY);
   } else {
     WSREP_DEBUG("wsrep_thd_bf_abort skipped awake");
   }
