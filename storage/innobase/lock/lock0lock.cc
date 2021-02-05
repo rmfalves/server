@@ -671,8 +671,12 @@ static void wsrep_assert_no_bf_bf_wait(
 	/* avoiding BF-BF conflict assert, if victim is already aborting
 	   or rolling back for replaying
 	*/
-	if (wsrep_thd_is_aborting(lock_rec2->trx->mysql_thd))
+	wsrep_thd_LOCK(lock_rec2->trx->mysql_thd);
+	if (wsrep_thd_is_aborting(lock_rec2->trx->mysql_thd)) {
+		wsrep_thd_UNLOCK(lock_rec2->trx->mysql_thd);
 		return;
+	}
+	wsrep_thd_UNLOCK(lock_rec2->trx->mysql_thd);
 
 	mtr_t mtr;
 
