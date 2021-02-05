@@ -7971,3 +7971,7 @@ ER_NOT_ALLOWED_IN_THIS_CONTEXT
         eng "'%-.128s' is not allowed in this context"
 ER_DATA_WAS_COMMITED_UNDER_ROLLBACK
         eng "Engine %s does not support rollback. Changes were committed during rollback call"
+ER_EXPIRE_LOGS_DAYS_IGNORED
+  eng "The option expire_logs_days cannot be used together with option binlog_expire_logs_seconds. Therefore, value of expire_logs_days is ignored."
+ER_BINLOG_EXPIRE_LOG_DAYS_AND_SECS_USED_TOGETHER
+  eng "The option expire_logs_days and binlog_expire_logs_seconds cannot be used together. Please use binlog_expire_logs_seconds to set the expire time (expire_logs_days is deprecated)"
