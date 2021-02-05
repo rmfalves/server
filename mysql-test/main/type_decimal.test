@@ -779,3 +779,21 @@ SET sql_mode=DEFAULT;
 --echo #
 --echo # End of 10.4 tests
 --echo #
+
+
+--echo #
+--echo # Start of 10.5 tests
+--echo #
+
+--echo #
+--echo # MDEV-24790 CAST('0e1111111111' AS DECIMAL(38,0)) returns a wrong result
+--echo #
+
+SELECT CAST('0e111111111' AS DECIMAL(38,0)) AS a;
+SELECT CAST('0e1111111111' AS DECIMAL(38,0)) AS a;
+SELECT CAST('.00000000000000000000000000000000000001e111111111111111111111' AS DECIMAL(38,0)) AS a;
+
+
+--echo #
+--echo # End of 10.5 tests
+--echo #

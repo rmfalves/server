@@ -929,12 +929,24 @@ internal_str2dec(const char *from, decimal_t *to, char **end, my_bool fixed)
       *end= (char*) end_of_string;
       if (str_error > 0)
       {
-        error= E_DEC_BAD_NUM;
+        /*
+          Check if the exponent is a huge positive number that
+          does not fit into ulonglong, e.g.:
+            1e111111111111111111111
+        */
+        error= (str_error == MY_ERRNO_ERANGE &&
+                exponent == ~0 && !decimal_is_zero(to)) ?
+               E_DEC_OVERFLOW : E_DEC_BAD_NUM;
         goto fatal_error;
       }
       if (exponent > INT_MAX/2 || (str_error == 0 && exponent < 0))
       {
-        error= E_DEC_OVERFLOW;
+        /*
+          The exponent fits into ulonglong, but it's still huge, e.g.
+            1e1111111111
+        */
+        if (!decimal_is_zero(to))
+          error= E_DEC_OVERFLOW;
         goto fatal_error;
       }
       if (exponent < INT_MIN/2 && error != E_DEC_OVERFLOW)
