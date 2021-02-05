@@ -95,6 +95,7 @@ static uint opt_protocol= 0;
 static FILE *result_file;
 static char *result_file_name= 0;
 static const char *output_prefix= "";
+static MEM_ROOT glob_root;
 
 #ifndef DBUG_OFF
 static const char *default_dbug_option = "d:t:o,/tmp/mariadb-binlog.trace";
@@ -1888,6 +1889,7 @@ static void cleanup()
   my_free(const_cast<char*>(dirname_for_local_load));
   my_free(start_datetime_str);
   my_free(stop_datetime_str);
+  free_root(&glob_root, MYF(0));
 
   delete binlog_filter;
   delete glob_description_event;
@@ -1943,7 +1945,7 @@ static my_time_t convert_str_to_timestamp(const char* str)
 
 
 extern "C" my_bool
-get_one_option(const struct my_option *opt, char *argument, const char *)
+get_one_option(const struct my_option *opt, const char *argument, const char *)
 {
   bool tty_password=0;
   switch (opt->id) {
@@ -1967,10 +1969,15 @@ get_one_option(const struct my_option *opt, char *argument, const char *)
       argument= (char*) "";                     // Don't require password
     if (argument)
     {
+      /*
+        One should not really change the argument, but we make an
+        exception for passwords
+      */
       my_free(pass);
-      char *start=argument;
+      char *start= (char*) argument;
       pass= my_strdup(PSI_NOT_INSTRUMENTED, argument,MYF(MY_FAE));
-      while (*argument) *argument++= 'x';		/* Destroy argument */
+      while (*argument)
+        *(char*)argument++= 'x';		/* Destroy argument */
       if (*start)
         start[1]=0;				/* Cut length of argument */
     }
@@ -2021,46 +2028,46 @@ get_one_option(const struct my_option *opt, char *argument, const char *)
   case OPT_REWRITE_DB:    // db_from->db_to
   {
     /* See also handling of OPT_REPLICATE_REWRITE_DB in sql/mysqld.cc */
-    char* ptr;
-    char* key= argument;  // db-from
-    char* val;            // db-to
+    const char* ptr;
+    const char* key= argument;  // db-from
+    const char* val;            // db-to
 
     // Where key begins
     while (*key && my_isspace(&my_charset_latin1, *key))
       key++;
 
     // Where val begins
-    if (!(ptr= strstr(argument, "->")))
+    if (!(ptr= strstr(key, "->")))
     {
       sql_print_error("Bad syntax in rewrite-db: missing '->'!\n");
       return 1;
     }
     val= ptr + 2;
-    while (*val && my_isspace(&my_charset_latin1, *val))
-      val++;
 
-    // Write \0 and skip blanks at the end of key
-    *ptr-- = 0;
-    while (my_isspace(&my_charset_latin1, *ptr) && ptr > argument)
-      *ptr-- = 0;
+    // Skip blanks at the end of key
+    while (ptr > argument && my_isspace(&my_charset_latin1, ptr[-1]))
+      ptr--;
 
-    if (!*key)
+    if (key == ptr)
     {
       sql_print_error("Bad syntax in rewrite-db: empty db-from!\n");
       return 1;
     }
+    key= strmake_root(&glob_root, key, (size_t) (ptr-key));
 
-    // Skip blanks at the end of val
-    ptr= val;
-    while (*ptr && !my_isspace(&my_charset_latin1, *ptr))
-      ptr++;
-    *ptr= 0;
+    /* Skipp pre space in value */
+    while (*val && my_isspace(&my_charset_latin1, *val))
+      val++;
 
-    if (!*val)
+    // Get value
+    for (ptr= val; *ptr && !my_isspace(&my_charset_latin1, *ptr) ; ptr++)
+    {}
+    if (ptr == val)
     {
       sql_print_error("Bad syntax in rewrite-db: empty db-to!\n");
       return 1;
     }
+    val= strmake_root(&glob_root, val, (size_t) (ptr-val));
 
     binlog_filter->add_db_rewrite(key, val);
     break;
@@ -3030,6 +3037,8 @@ int main(int argc, char** argv)
   load_defaults_or_exit("my", load_groups, &argc, &argv);
   defaults_argv= argv;
 
+  init_alloc_root(PSI_NOT_INSTRUMENTED, &glob_root, 1024, 0, MYF(0));
+
   if (!(binlog_filter= new Rpl_filter))
   {
     error("Failed to create Rpl_filter");
@@ -3068,6 +3077,7 @@ int main(int argc, char** argv)
     if (!remote_opt)
     {
       error("The --raw mode only works with --read-from-remote-server");
+      cleanup();
       exit(1);
     }
     if (one_database)
@@ -3090,6 +3100,7 @@ int main(int argc, char** argv)
                                   O_WRONLY | O_BINARY, MYF(MY_WME))))
       {
         error("Could not create log file '%s'", result_file_name);
+        cleanup();
         exit(1);
       }
     }

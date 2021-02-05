@@ -144,9 +144,9 @@ static char  *opt_password=0,*current_user=0,
              *current_host=0,*path=0,*fields_terminated=0,
              *lines_terminated=0, *enclosed=0, *opt_enclosed=0, *escaped=0,
              *where=0, *order_by=0,
-             *opt_compatible_mode_str= 0,
              *err_ptr= 0,
              *log_error_file= NULL;
+static const char *opt_compatible_mode_str= 0;
 static char **defaults_argv= 0;
 static char compatible_mode_normal_str[255];
 /* Server supports character_set_results session variable? */
@@ -849,7 +849,8 @@ uchar* get_table_key(const char *entry, size_t *length,
 
 static my_bool
 get_one_option(const struct my_option *opt,
-               char *argument, const char *filename __attribute__((unused)))
+               const char *argument,
+               const char *filename __attribute__((unused)))
 {
   switch (opt->id) {
   case 'p':
@@ -857,10 +858,15 @@ get_one_option(const struct my_option *opt,
       argument= (char*) "";                     /* Don't require password */
     if (argument)
     {
-      char *start=argument;
+      /*
+        One should not really change the argument, but we make an
+        exception for passwords
+      */
+      char *start= (char*) argument;
       my_free(opt_password);
       opt_password= my_strdup(PSI_NOT_INSTRUMENTED, argument, MYF(MY_FAE));
-      while (*argument) *argument++= 'x';               /* Destroy argument */
+      while (*argument)
+        *(char*) argument++= 'x';               /* Destroy argument */
       if (*start)
         start[1]=0;                             /* Cut length of argument */
       tty_password= 0;
