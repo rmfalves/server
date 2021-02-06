@@ -18580,7 +18580,7 @@ static void bg_wsrep_kill_trx(void *void_arg)
 
 	lock_mutex_enter();
 	trx_mutex_enter(victim_trx);
-	if (victim_trx->id != arg->trx_id)
+	if (0 && victim_trx->id != arg->trx_id)
 		goto ret1;
 
 	DBUG_ASSERT(wsrep_on(bf_thd));
