@@ -5733,8 +5733,9 @@ enum_nested_loop_state join_tab_execution_startup(JOIN_TAB *tab)
     */
 
     /*
-      TODO(varun): this can be move to the SJM nest when the handling
-      of sort-nest is done with a bush
+      TODO(varun): maybe this can be re-factored with the above branch
+      that uses SJM-nest. To do this we need SJ_MATERIALIZATION_INFO
+      to also be a derived from Mat_join_tab_nest_info.
     */
     enum_nested_loop_state rc;
     JOIN *join= tab->join;

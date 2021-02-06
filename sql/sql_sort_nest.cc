@@ -1392,17 +1392,20 @@ void JOIN::set_fraction_output_for_nest()
     So this function disables the use of sort-nest for such operations.
 
     Sort nest is not allowed for
-    1) No ORDER BY clause
-    2) Only constant tables in the join
-    3) DISTINCT CLAUSE
-    4) GROUP BY CLAUSE
-    5) HAVING clause
-    6) Aggregate Functions
-    7) Window Functions
-    8) Using ROLLUP
-    9) Using SQL_BUFFER_RESULT
-    10) LIMIT is absent
-    11) Only SELECT queries can use the sort nest
+    1) ORDER BY LIMIT optimization is disabled
+    2) No ORDER BY clause
+    3) Only constant tables in the join
+    4) DISTINCT CLAUSE
+    5) GROUP BY CLAUSE
+    6) HAVING clause
+    7) Aggregate Functions
+    8) Window Functions
+    9) Using ROLLUP
+    10) Using SQL_BUFFER_RESULT
+    11) LIMIT is absent
+    12) Only SELECT queries can use the sort nest
+    13) SELECT is not a DEPENDENT SUBQUERY
+    14) NO STRAIGHT JOIN
 
   @retval
    TRUE     Sort-nest is allowed
@@ -1424,7 +1427,8 @@ bool JOIN::sort_nest_allowed()
            select_limit == HA_POS_ERROR ||
            thd->lex->sql_command != SQLCOM_SELECT ||
            select_lex->uncacheable & UNCACHEABLE_DEPENDENT ||
-           MY_TEST(select_options & SELECT_STRAIGHT_JOIN));
+           MY_TEST(select_options & SELECT_STRAIGHT_JOIN) ||
+           is_order_by_expensive());
 }
 
 
@@ -1463,6 +1467,10 @@ bool JOIN::consider_adding_sort_nest(table_map prefix_tables, uint idx)
 }
 
 
+/*
+TODO varun: add comments here
+also add the reasoning in the function above too
+*/
 bool
 JOIN::extend_prefix_to_ensure_duplicate_removal(table_map prefix_tables, uint idx)
 {
