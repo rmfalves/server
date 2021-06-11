@@ -2580,10 +2580,15 @@ void Locked_tables_list::mark_table_for_reopen(THD *thd, TABLE *table)
 {
   TABLE_SHARE *share= table->s;
 
-    for (TABLE_LIST *table_list= m_locked_tables;
+  for (TABLE_LIST *table_list= m_locked_tables;
        table_list; table_list= table_list->next_global)
   {
-    if (table_list->table->s == share)
+    /*
+      table_list->table can be NULL in the case of TRUNCATE TABLE where
+      the table was locked twice and one instance closed in
+      close_all_tables_for_name().
+    */
+    if (table_list->table && table_list->table->s == share)
       table_list->table->internal_set_needs_reopen(true);
   }
   /* This is needed in the case where lock tables where not used */
@@ -4527,9 +4532,9 @@ error:
   @retval TRUE   Failure (OOM).
 */
 
-bool DML_prelocking_strategy::
-handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
-               Sroutine_hash_entry *rt, sp_head *sp, bool *need_prelocking)
+bool DML_prelocking_strategy::handle_routine(THD *thd,
+               Query_tables_list *prelocking_ctx, Sroutine_hash_entry *rt,
+               sp_head *sp, bool *need_prelocking)
 {
   /*
     We assume that for any "CALL proc(...)" statement sroutines_list will
@@ -4663,8 +4668,8 @@ prepare_fk_prelocking_list(THD *thd, Query_tables_list *prelocking_ctx,
     // FK_OPTION_RESTRICT and FK_OPTION_NO_ACTION only need read access
     thr_lock_type lock_type;
 
-    if ((op & (1 << TRG_EVENT_DELETE) && fk_modifies_child(fk->delete_method))
-        || (op & (1 << TRG_EVENT_UPDATE) && fk_modifies_child(fk->update_method)))
+    if ((op & trg2bit(TRG_EVENT_DELETE) && fk_modifies_child(fk->delete_method))
+     || (op & trg2bit(TRG_EVENT_UPDATE) && fk_modifies_child(fk->update_method)))
       lock_type= TL_WRITE_ALLOW_WRITE;
     else
       lock_type= TL_READ;
@@ -4710,9 +4715,9 @@ prepare_fk_prelocking_list(THD *thd, Query_tables_list *prelocking_ctx,
   @retval TRUE   Failure (OOM).
 */
 
-bool DML_prelocking_strategy::
-handle_table(THD *thd, Query_tables_list *prelocking_ctx,
-             TABLE_LIST *table_list, bool *need_prelocking)
+bool DML_prelocking_strategy::handle_table(THD *thd,
+             Query_tables_list *prelocking_ctx, TABLE_LIST *table_list,
+             bool *need_prelocking)
 {
   DBUG_ENTER("handle_table");
   TABLE *table= table_list->table;
@@ -4841,9 +4846,9 @@ err:
   @retval TRUE   Failure (OOM).
 */
 
-bool DML_prelocking_strategy::
-handle_view(THD *thd, Query_tables_list *prelocking_ctx,
-            TABLE_LIST *table_list, bool *need_prelocking)
+bool DML_prelocking_strategy::handle_view(THD *thd,
+            Query_tables_list *prelocking_ctx, TABLE_LIST *table_list,
+            bool *need_prelocking)
 {
   if (table_list->view->uses_stored_routines())
   {
@@ -4881,9 +4886,9 @@ handle_view(THD *thd, Query_tables_list *prelocking_ctx,
   @retval TRUE   Failure (OOM).
 */
 
-bool Lock_tables_prelocking_strategy::
-handle_table(THD *thd, Query_tables_list *prelocking_ctx,
-             TABLE_LIST *table_list, bool *need_prelocking)
+bool Lock_tables_prelocking_strategy::handle_table(THD *thd,
+             Query_tables_list *prelocking_ctx, TABLE_LIST *table_list,
+             bool *need_prelocking)
 {
   TABLE_LIST **last= prelocking_ctx->query_tables_last;
 
@@ -4914,9 +4919,9 @@ handle_table(THD *thd, Query_tables_list *prelocking_ctx,
   a simple view, but one that uses stored routines.
 */
 
-bool Alter_table_prelocking_strategy::
-handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
-               Sroutine_hash_entry *rt, sp_head *sp, bool *need_prelocking)
+bool Alter_table_prelocking_strategy::handle_routine(THD *thd,
+               Query_tables_list *prelocking_ctx, Sroutine_hash_entry *rt,
+               sp_head *sp, bool *need_prelocking)
 {
   return FALSE;
 }
@@ -4940,9 +4945,9 @@ handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
   @retval TRUE   Failure (OOM).
 */
 
-bool Alter_table_prelocking_strategy::
-handle_table(THD *thd, Query_tables_list *prelocking_ctx,
-             TABLE_LIST *table_list, bool *need_prelocking)
+bool Alter_table_prelocking_strategy::handle_table(THD *thd,
+             Query_tables_list *prelocking_ctx, TABLE_LIST *table_list,
+             bool *need_prelocking)
 {
   return FALSE;
 }
@@ -4955,9 +4960,9 @@ handle_table(THD *thd, Query_tables_list *prelocking_ctx,
   to be materialized.
 */
 
-bool Alter_table_prelocking_strategy::
-handle_view(THD *thd, Query_tables_list *prelocking_ctx,
-            TABLE_LIST *table_list, bool *need_prelocking)
+bool Alter_table_prelocking_strategy::handle_view(THD *thd,
+            Query_tables_list *prelocking_ctx, TABLE_LIST *table_list,
+            bool *need_prelocking)
 {
   return FALSE;
 }

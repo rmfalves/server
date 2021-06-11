@@ -101,16 +101,16 @@ operations by purge as the previous, when it seems to be growing huge.
 throughput clearly from about 100000. */
 #define BTR_CUR_FINE_HISTORY_LENGTH	100000
 
+#ifdef BTR_CUR_HASH_ADAPT
 /** Number of searches down the B-tree in btr_cur_search_to_nth_level(). */
-Atomic_counter<ulint>	btr_cur_n_non_sea;
+ib_counter_t<ulint, ib_counter_element_t>	btr_cur_n_non_sea;
 /** Old value of btr_cur_n_non_sea.  Copied by
 srv_refresh_innodb_monitor_stats().  Referenced by
 srv_printf_innodb_monitor(). */
 ulint	btr_cur_n_non_sea_old;
-#ifdef BTR_CUR_HASH_ADAPT
 /** Number of successful adaptive hash index lookups in
 btr_cur_search_to_nth_level(). */
-ulint	btr_cur_n_sea;
+ib_counter_t<ulint, ib_counter_element_t>	btr_cur_n_sea;
 /** Old value of btr_cur_n_sea.  Copied by
 srv_refresh_innodb_monitor_stats().  Referenced by
 srv_printf_innodb_monitor(). */
@@ -1403,23 +1403,21 @@ btr_cur_search_to_nth_level_func(
 # ifdef UNIV_SEARCH_PERF_STAT
 	info->n_searches++;
 # endif
-	if (autoinc == 0
-	    && latch_mode <= BTR_MODIFY_LEAF
-	    && info->last_hash_succ
-# ifdef MYSQL_INDEX_DISABLE_AHI
-	    && !index->disable_ahi
-# endif
+	if (!btr_search_enabled) {
+	} else if (autoinc == 0
 	    && !estimate
-# ifdef PAGE_CUR_LE_OR_EXTENDS
-	    && mode != PAGE_CUR_LE_OR_EXTENDS
-# endif /* PAGE_CUR_LE_OR_EXTENDS */
-	    && !dict_index_is_spatial(index)
+	    && latch_mode <= BTR_MODIFY_LEAF
+	    && !modify_external
 	    /* If !ahi_latch, we do a dirty read of
 	    btr_search_enabled below, and btr_search_guess_on_hash()
 	    will have to check it again. */
 	    && btr_search_enabled
-	    && !modify_external
+# ifdef PAGE_CUR_LE_OR_EXTENDS
+	    && mode != PAGE_CUR_LE_OR_EXTENDS
+# endif /* PAGE_CUR_LE_OR_EXTENDS */
+	    && info->last_hash_succ
 	    && !(tuple->info_bits & REC_INFO_MIN_REC_FLAG)
+	    && !index->is_spatial() && !index->table->is_temporary()
 	    && btr_search_guess_on_hash(index, info, tuple, mode,
 					latch_mode, cursor,
 					ahi_latch, mtr)) {
@@ -1432,13 +1430,14 @@ btr_cur_search_to_nth_level_func(
 		      || mode != PAGE_CUR_LE);
 		ut_ad(cursor->low_match != ULINT_UNDEFINED
 		      || mode != PAGE_CUR_LE);
-		btr_cur_n_sea++;
+		++btr_cur_n_sea;
 
 		DBUG_RETURN(err);
+	} else {
+		++btr_cur_n_non_sea;
 	}
 # endif /* BTR_CUR_HASH_ADAPT */
 #endif /* BTR_CUR_ADAPT */
-	btr_cur_n_non_sea++;
 
 	/* If the hash search did not succeed, do binary search down the
 	tree */
@@ -2443,9 +2442,6 @@ need_opposite_intention:
 		btr_search_build_page_hash_index() before building a
 		page hash index, while holding search latch. */
 		if (!btr_search_enabled) {
-# ifdef MYSQL_INDEX_DISABLE_AHI
-		} else if (index->disable_ahi) {
-# endif
 		} else if (tuple->info_bits & REC_INFO_MIN_REC_FLAG) {
 			ut_ad(index->is_instant());
 			/* This may be a search tuple for
@@ -2453,6 +2449,8 @@ need_opposite_intention:
 			ut_ad(tuple->is_metadata()
 			      || (tuple->is_metadata(tuple->info_bits
 						     ^ REC_STATUS_INSTANT)));
+		} else if (index->is_spatial()) {
+		} else if (index->table->is_temporary()) {
 		} else if (rec_is_metadata(btr_cur_get_rec(cursor), *index)) {
 			/* Only user records belong in the adaptive
 			hash index. */
@@ -3602,13 +3600,11 @@ fail_err:
 
 #ifdef BTR_CUR_HASH_ADAPT
 	if (!leaf) {
-# ifdef MYSQL_INDEX_DISABLE_AHI
-	} else if (index->disable_ahi) {
-# endif
 	} else if (entry->info_bits & REC_INFO_MIN_REC_FLAG) {
 		ut_ad(entry->is_metadata());
 		ut_ad(index->is_instant());
 		ut_ad(flags == BTR_NO_LOCKING_FLAG);
+	} else if (index->table->is_temporary()) {
 	} else {
 		srw_lock* ahi_latch = btr_search_sys.get_latch(*index);
 		if (!reorg && cursor->flag == BTR_CUR_HASH) {
@@ -3811,14 +3807,12 @@ btr_cur_pessimistic_insert(
 		ut_ad(!big_rec_vec);
 	} else {
 #ifdef BTR_CUR_HASH_ADAPT
-# ifdef MYSQL_INDEX_DISABLE_AHI
-		if (index->disable_ahi); else
-# endif
 		if (entry->info_bits & REC_INFO_MIN_REC_FLAG) {
 			ut_ad(entry->is_metadata());
 			ut_ad(index->is_instant());
 			ut_ad(flags & BTR_NO_LOCKING_FLAG);
 			ut_ad(!(flags & BTR_CREATE_FLAG));
+		} else if (index->table->is_temporary()) {
 		} else {
 			btr_search_update_hash_on_insert(
 				cursor, btr_search_sys.get_latch(*index));

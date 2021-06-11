@@ -959,7 +959,6 @@ static monitor_info_t	innodb_counter_info[] =
 	 static_cast<monitor_type_t>(
 	 MONITOR_EXISTING | MONITOR_DEFAULT_ON),
 	 MONITOR_DEFAULT_START, MONITOR_OVLD_ADAPTIVE_HASH_SEARCH},
-#endif /* BTR_CUR_HASH_ADAPT */
 
 	{"adaptive_hash_searches_btree", "adaptive_hash_index",
 	 "Number of searches using B-tree on an index search",
@@ -967,7 +966,6 @@ static monitor_info_t	innodb_counter_info[] =
 	 MONITOR_EXISTING | MONITOR_DEFAULT_ON),
 	 MONITOR_DEFAULT_START, MONITOR_OVLD_ADAPTIVE_HASH_SEARCH_BTREE},
 
-#ifdef BTR_CUR_HASH_ADAPT
 	{"adaptive_hash_pages_added", "adaptive_hash_index",
 	 "Number of index pages on which the Adaptive Hash Index is built",
 	 MONITOR_NONE,
@@ -1090,11 +1088,6 @@ static monitor_info_t	innodb_counter_info[] =
 	 MONITOR_NONE,
 	 MONITOR_DEFAULT_START, MONITOR_MASTER_IDLE_LOOPS},
 
-	{"innodb_background_drop_table_usec", "server",
-	 "Time (in microseconds) spent to process drop table list",
-	 MONITOR_NONE,
-	 MONITOR_DEFAULT_START, MONITOR_SRV_BACKGROUND_DROP_TABLE_MICROSECOND},
-
 	{"innodb_log_flush_usec", "server",
 	 "Time (in microseconds) spent to flush log records",
 	 MONITOR_NONE,
@@ -1188,11 +1181,6 @@ static monitor_info_t	innodb_counter_info[] =
 	 "Number of indexes waiting to be dropped after failed index creation",
 	 MONITOR_NONE,
 	 MONITOR_DEFAULT_START, MONITOR_BACKGROUND_DROP_INDEX},
-
-	{"ddl_background_drop_tables", "ddl",
-	 "Number of tables in background drop table list",
-	 MONITOR_NONE,
-	 MONITOR_DEFAULT_START, MONITOR_BACKGROUND_DROP_TABLE},
 
 	{"ddl_online_create_index", "ddl",
 	 "Number of indexes being created online",
@@ -1829,11 +1817,11 @@ srv_mon_process_existing_counter(
 	case MONITOR_OVLD_ADAPTIVE_HASH_SEARCH:
 		value = btr_cur_n_sea;
 		break;
-#endif /* BTR_CUR_HASH_ADAPT */
 
 	case MONITOR_OVLD_ADAPTIVE_HASH_SEARCH_BTREE:
 		value = btr_cur_n_non_sea;
 		break;
+#endif /* BTR_CUR_HASH_ADAPT */
 
         case MONITOR_OVLD_PAGE_COMPRESS_SAVED:
 		value = srv_stats.page_compression_saved;
