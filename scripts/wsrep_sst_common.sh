@@ -603,16 +603,16 @@ SCRIPTS_DIR=$(cd "$script_binary"; pwd -P)
 EXTRA_DIR="$SCRIPTS_DIR/../extra"
 CLIENT_DIR="$SCRIPTS_DIR/../client"
 
-if [ -x "$CLIENT_DIR/mysql" ]; then
-    MYSQL_CLIENT="$CLIENT_DIR/mysql"
+if [ -x "$CLIENT_DIR/mariadb" ]; then
+    MYSQL_CLIENT="$CLIENT_DIR/mariadb"
 else
-    MYSQL_CLIENT="$(command -v mysql)"
+    MYSQL_CLIENT="$(command -v mariadb)"
 fi
 
-if [ -x "$CLIENT_DIR/mysqldump" ]; then
-    MYSQLDUMP="$CLIENT_DIR/mysqldump"
+if [ -x "$CLIENT_DIR/mariadb-dump" ]; then
+    MYSQLDUMP="$CLIENT_DIR/mariadb-dump"
 else
-    MYSQLDUMP="$(command -v mysqldump)"
+    MYSQLDUMP="$(command -v mariadb-dump)"
 fi
 
 wsrep_log()
@@ -1190,7 +1190,6 @@ trim_string()
 check_pid()
 {
     local pid_file="$1"
-    local remove=${2:-0}
     if [ -r "$pid_file" ]; then
         local pid=$(cat "$pid_file" 2>/dev/null)
         if [ -n "$pid" ]; then
@@ -1201,6 +1200,7 @@ check_pid()
                 fi
             fi
         fi
+        local remove=${2:-0}
         if [ $remove -eq 1 ]; then
             rm -f "$pid_file"
         fi
@@ -1223,7 +1223,7 @@ check_pid()
 #
 cleanup_pid()
 {
-    local pid="$1"
+    local pid=$1
     local pid_file="${2:-}"
     local config="${3:-}"
 
@@ -1241,8 +1241,9 @@ cleanup_pid()
                            round=8
                            force=1
                            kill -9 $pid >/dev/null 2>&1
+                           sleep 0.5
                        else
-                           return 1;
+                           return 1
                        fi
                    fi
                 done
@@ -1254,7 +1255,7 @@ cleanup_pid()
     fi
 
     [ -n "$pid_file" ] && [ -f "$pid_file" ] && rm -f "$pid_file"
-    [ -n "$config" ]   && [ -f "$config"   ] && rm -f "$config"
+    [ -n "$config" ]   && [ -f "$config" ]   && rm -f "$config"
 
     return 0
 }

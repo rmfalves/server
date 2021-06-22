@@ -10410,7 +10410,7 @@ do_continue:;
         DROP + CREATE + data statement to the binary log
       */
       thd->variables.option_bits&= ~OPTION_BIN_COMMIT_OFF;
-      (binlog_hton->commit)(binlog_hton, thd, 1);
+      binlog_commit(thd, true);
     }
 
     /* We don't replicate alter table statement on temporary tables */
@@ -10508,7 +10508,12 @@ do_continue:;
   DBUG_PRINT("info", ("is_table_renamed: %d  engine_changed: %d",
                       alter_ctx.is_table_renamed(), engine_changed));
 
-  if (!alter_ctx.is_table_renamed())
+  /*
+    InnoDB cannot use the rename optimization when foreign key
+    constraint is involved because InnoDB fails to drop the
+    parent table due to foreign key constraint
+  */
+  if (!alter_ctx.is_table_renamed() || alter_ctx.fk_error_if_delete_row)
   {
     /*
       Rename the old table to temporary name to have a backup in case
@@ -10560,7 +10565,7 @@ do_continue:;
     (void) quick_rm_table(thd, new_db_type, &alter_ctx.new_db,
                           &alter_ctx.tmp_name, FN_IS_TMP);
 
-    if (!alter_ctx.is_table_renamed())
+    if (!alter_ctx.is_table_renamed() || alter_ctx.fk_error_if_delete_row)
     {
       // Restore the backup of the original table to the old name.
       (void) mysql_rename_table(old_db_type, &alter_ctx.db, &backup_name,
@@ -10624,7 +10629,7 @@ do_continue:;
     thd->variables.option_bits&= ~OPTION_BIN_COMMIT_OFF;
     thd->binlog_xid= thd->query_id;
     ddl_log_update_xid(&ddl_log_state, thd->binlog_xid);
-    binlog_hton->commit(binlog_hton, thd, 1);
+    binlog_commit(thd, true);
     thd->binlog_xid= 0;
   }
 
@@ -10743,7 +10748,7 @@ err_new_table_cleanup:
                           &alter_ctx.new_db, &alter_ctx.tmp_name,
                           (FN_IS_TMP | (no_ha_table ? NO_HA_TABLE : 0)),
                           alter_ctx.get_tmp_path());
-
+  DEBUG_SYNC(thd, "alter_table_after_temp_table_drop");
 err_cleanup:
   my_free(const_cast<uchar*>(frm.str));
   ddl_log_complete(&ddl_log_state);
@@ -11178,6 +11183,7 @@ copy_data_between_tables(THD *thd, TABLE *from, TABLE *to,
   cleanup_done= 1;
   to->file->extra(HA_EXTRA_NO_IGNORE_DUP_KEY);
 
+  DEBUG_SYNC(thd, "copy_data_between_tables_before_reset_backup_lock");
   if (backup_reset_alter_copy_lock(thd))
     error= 1;
 
@@ -11266,12 +11272,35 @@ bool mysql_recreate_table(THD *thd, TABLE_LIST *table_list, bool table_copy)
 }
 
 
+/**
+  Collect field names of result set that will be sent to a client in result of
+  handling the CHECKSUM TABLE statement.
+
+  @param      thd     Thread data object
+  @param[out] fields  List of fields whose metadata should be collected for
+                      sending to client
+ */
+
+void fill_checksum_table_metadata_fields(THD *thd, List<Item> *fields)
+{
+  Item *item;
+
+  item= new (thd->mem_root) Item_empty_string(thd, "Table", NAME_LEN*2);
+  item->set_maybe_null();
+  fields->push_back(item, thd->mem_root);
+
+  item= new (thd->mem_root) Item_int(thd, "Checksum", (longlong) 1,
+                                     MY_INT64_NUM_DECIMAL_DIGITS);
+  item->set_maybe_null();
+  fields->push_back(item, thd->mem_root);
+}
+
+
 bool mysql_checksum_table(THD *thd, TABLE_LIST *tables,
                           HA_CHECK_OPT *check_opt)
 {
   TABLE_LIST *table;
   List<Item> field_list;
-  Item *item;
   Protocol *protocol= thd->protocol;
   DBUG_ENTER("mysql_checksum_table");
 
@@ -11281,15 +11310,8 @@ bool mysql_checksum_table(THD *thd, TABLE_LIST *tables,
   */
   DBUG_ASSERT(! thd->in_sub_stmt);
 
-  field_list.push_back(item= new (thd->mem_root)
-                       Item_empty_string(thd, "Table", NAME_LEN*2),
-                       thd->mem_root);
-  item->set_maybe_null();
-  field_list.push_back(item= new (thd->mem_root)
-                       Item_int(thd, "Checksum", (longlong) 1,
-                                MY_INT64_NUM_DECIMAL_DIGITS),
-                       thd->mem_root);
-  item->set_maybe_null();
+  fill_checksum_table_metadata_fields(thd, &field_list);
+
   if (protocol->send_result_set_metadata(&field_list,
                             Protocol::SEND_NUM_ROWS | Protocol::SEND_EOF))
     DBUG_RETURN(TRUE);

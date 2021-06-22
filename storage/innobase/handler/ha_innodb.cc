@@ -1559,6 +1559,8 @@ retry:
     mem_heap_free(heap);
     for (pfs_os_file_t detached : to_close)
       os_file_close(detached);
+    /* Any changes must be persisted before we return. */
+    log_write_up_to(mtr.commit_lsn(), true);
   }
 
   my_free(namebuf);
@@ -1952,6 +1954,118 @@ static int innodb_check_version(handlerton *hton, const char *path,
     DBUG_RETURN(2);
 }
 
+/** Drop any garbage intermediate tables that existed in the system
+after a backup was restored.
+
+In a final phase of Mariabackup, the commit of DDL operations is blocked,
+and those DDL operations will have to be rolled back. Because the
+normal DDL recovery will not run due to the lack of the log file,
+at least some #sql-alter- garbage tables may remain in the InnoDB
+data dictionary (while the data files themselves are missing).
+We will attempt to drop the tables here. */
+static void drop_garbage_tables_after_restore()
+{
+  btr_pcur_t pcur;
+  mtr_t mtr;
+  trx_t *trx= trx_create();
+
+  ut_ad(!purge_sys.enabled());
+  ut_d(purge_sys.stop_FTS());
+
+  mtr.start();
+  btr_pcur_open_at_index_side(true, dict_sys.sys_tables->indexes.start,
+                              BTR_SEARCH_LEAF, &pcur, true, 0, &mtr);
+  for (;;)
+  {
+    btr_pcur_move_to_next_user_rec(&pcur, &mtr);
+
+    if (!btr_pcur_is_on_user_rec(&pcur))
+      break;
+
+    const rec_t *rec= btr_pcur_get_rec(&pcur);
+    if (rec_get_deleted_flag(rec, 0))
+      continue;
+
+    static_assert(DICT_FLD__SYS_TABLES__NAME == 0, "compatibility");
+    size_t len;
+    if (rec_get_1byte_offs_flag(rec))
+    {
+      len= rec_1_get_field_end_info(rec, 0);
+      if (len & REC_1BYTE_SQL_NULL_MASK)
+        continue; /* corrupted SYS_TABLES.NAME */
+    }
+    else
+    {
+      len= rec_2_get_field_end_info(rec, 0);
+      static_assert(REC_2BYTE_EXTERN_MASK == 16384, "compatibility");
+      if (len >= REC_2BYTE_EXTERN_MASK)
+        continue; /* corrupted SYS_TABLES.NAME */
+    }
+
+    if (len < tmp_file_prefix_length)
+      continue;
+    if (const char *f= static_cast<const char*>
+        (memchr(rec, '/', len - tmp_file_prefix_length)))
+    {
+      if (memcmp(f + 1, tmp_file_prefix, tmp_file_prefix_length))
+        continue;
+    }
+    else
+      continue;
+
+    btr_pcur_store_position(&pcur, &mtr);
+    btr_pcur_commit_specify_mtr(&pcur, &mtr);
+
+    trx_start_for_ddl(trx);
+    std::vector<pfs_os_file_t> deleted;
+    row_mysql_lock_data_dictionary(trx);
+    dberr_t err= DB_TABLE_NOT_FOUND;
+
+    if (dict_table_t *table= dict_sys.load_table
+        ({reinterpret_cast<const char*>(pcur.old_rec), len},
+         DICT_ERR_IGNORE_DROP))
+    {
+      ut_ad(table->stats_bg_flag == BG_STAT_NONE);
+      table->acquire();
+      err= lock_table_for_trx(table, trx, LOCK_X);
+      if (err == DB_SUCCESS &&
+          (table->flags2 & (DICT_TF2_FTS_HAS_DOC_ID | DICT_TF2_FTS)))
+      {
+        dict_sys.unlock();
+        fts_optimize_remove_table(table);
+        err= fts_lock_tables(trx, *table);
+        dict_sys.lock(SRW_LOCK_CALL);
+      }
+      table->release();
+
+      if (err == DB_SUCCESS)
+        err= trx->drop_table(*table);
+      if (err != DB_SUCCESS)
+        goto fail;
+      trx->commit(deleted);
+    }
+    else
+    {
+fail:
+      trx->rollback();
+      sql_print_error("InnoDB: cannot drop %.*s: %s",
+                      static_cast<int>(len), pcur.old_rec, ut_strerr(err));
+    }
+
+    row_mysql_unlock_data_dictionary(trx);
+    for (pfs_os_file_t d : deleted)
+      os_file_close(d);
+
+    mtr.start();
+    btr_pcur_restore_position(BTR_SEARCH_LEAF, &pcur, &mtr);
+  }
+
+  btr_pcur_close(&pcur);
+  mtr.commit();
+  trx->free();
+  ut_d(purge_sys.resume_FTS());
+}
+
 static void innodb_ddl_recovery_done(handlerton*)
 {
   ut_ad(!ddl_recovery_done);
@@ -1959,6 +2073,8 @@ static void innodb_ddl_recovery_done(handlerton*)
   if (!srv_read_only_mode && srv_operation == SRV_OPERATION_NORMAL &&
       srv_force_recovery < SRV_FORCE_NO_BACKGROUND)
   {
+    if (srv_start_after_restore && !high_level_read_only)
+      drop_garbage_tables_after_restore();
     srv_init_purge_tasks();
     purge_sys.coordinator_startup();
     srv_wake_purge_thread_if_not_active();
@@ -13033,6 +13149,9 @@ ha_innobase::create(
 		row_mysql_unlock_data_dictionary(trx);
 		for (pfs_os_file_t d : deleted) os_file_close(d);
 		error = info.create_table_update_dict();
+		if (!(info.flags2() & DICT_TF2_TEMPORARY)) {
+			log_write_up_to(trx->commit_lsn, true);
+		}
 	}
 
 	if (own_trx) {
@@ -13258,21 +13377,15 @@ int ha_innobase::delete_table(const char *name)
 
   trx_t *trx= parent_trx;
   if (!trx->lock.table_locks.empty() &&
-      thd_sql_command(trx->mysql_thd) == SQLCOM_CREATE_TABLE)
+      thd_ddl_options(trx->mysql_thd)->is_create_select())
   {
-#if 0 // MDEV-21602 FIXME: this fails for innodb.innodb and some others
-    for (const lock_t *l : trx->lock.table_locks)
-      if (l && l->type_mode == (LOCK_IX | LOCK_TABLE) &&
-          l->un_member.tab_lock.table == table)
-        goto create_select;
-    sql_print_warning("InnoDB: CREATE...SELECT did not hold expected locks");
-create_select:
-#endif
     /* CREATE TABLE...PRIMARY KEY...SELECT ought to be dropping the
-    table because a duplicate key was detected. We shall hijack the
-    existing transaction to drop the table and commit the transaction.
-    If this is a partitioned table, one partition will use this hijacked
-    transaction; others will use a separate transaction, one per partition. */
+    table because a duplicate key was detected or a timeout occurred.
+
+    We shall hijack the existing transaction to drop the table and
+    commit the transaction.  If this is a partitioned table, one
+    partition will use this hijacked transaction; others will use a
+    separate transaction, one per partition. */
     ut_ad(!trx->dict_operation_lock_mode);
     ut_ad(trx->will_lock);
     ut_ad(trx->state == TRX_STATE_ACTIVE);
@@ -13385,10 +13498,11 @@ err_exit:
   std::vector<pfs_os_file_t> deleted;
   trx->commit(deleted);
   row_mysql_unlock_data_dictionary(trx);
-  if (trx != parent_trx)
-    trx->free();
   for (pfs_os_file_t d : deleted)
     os_file_close(d);
+  log_write_up_to(trx->commit_lsn, true);
+  if (trx != parent_trx)
+    trx->free();
   if (fts)
     purge_sys.resume_FTS();
   DBUG_RETURN(0);
@@ -13601,6 +13715,7 @@ int ha_innobase::truncate()
 
 		err = create(name, table, &info,
 			     dict_table_is_file_per_table(ib_table), trx);
+		/* On success, create() durably committed trx. */
 		if (fts) {
 			purge_sys.resume_FTS();
 		}
@@ -13696,6 +13811,9 @@ ha_innobase::rename_table(
 	}
 
 	row_mysql_unlock_data_dictionary(trx);
+	if (error == DB_SUCCESS) {
+		log_write_up_to(trx->commit_lsn, true);
+	}
 	trx->free();
 
 	if (error == DB_DUPLICATE_KEY) {
@@ -15314,6 +15432,9 @@ ha_innobase::extra(
 		break;
 	case HA_EXTRA_END_ALTER_COPY:
 		m_prebuilt->table->skip_alter_undo = 0;
+		if (!m_prebuilt->table->is_temporary()) {
+			log_write_up_to(LSN_MAX, true);
+		}
 		break;
 	default:/* Do nothing */
 		;
